@@ -1,0 +1,210 @@
+-- =============================================================================
+-- NOTEDER / PrivateNote - Veritabanı şema ve CREATE scriptleri
+-- Frontend (noteder-ui) ile uyumlu tablolar. Backend'i yazarken bu yapıyı kullanın.
+-- Veritabanı: PostgreSQL (MySQL kullanıyorsanız dipnotlara bakın)
+-- =============================================================================
+
+-- -----------------------------------------------------------------------------
+-- 1. KULLANICILAR (Kayıt / Giriş)
+-- Auth ekranı: username (kayıtta), email, password
+-- -----------------------------------------------------------------------------
+CREATE TABLE users (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  username          VARCHAR(100) NOT NULL,
+  email             VARCHAR(255) NOT NULL UNIQUE,
+  password_hash     VARCHAR(255) NOT NULL,
+  avatar            TEXT,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX idx_users_email ON users (LOWER(email));
+CREATE UNIQUE INDEX idx_users_username ON users (LOWER(username));
+CREATE INDEX idx_users_created_at ON users (created_at);
+
+COMMENT ON TABLE users IS 'Kayıt olan kullanıcılar. Auth: username, email, password_hash.';
+COMMENT ON COLUMN users.avatar IS 'Base64 data URL veya CDN URL. Profil ayarlarından yüklenir.';
+
+
+-- -----------------------------------------------------------------------------
+-- 2. KULLANICI AYARLARI (Profil + Tema + Uygulama tercihleri)
+-- ProfileSettings: username, email, avatar, fontSize, defaultCategory,
+-- defaultNoteColor, colorTheme, theme (dark/light), defaultSecurePassword
+-- showStats: NotesList içinde localStorage showStats
+-- -----------------------------------------------------------------------------
+CREATE TABLE user_settings (
+  user_id                 UUID PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,
+  -- Profil (users tablosunda da var; burada kullanıcının görüntülediği ad/email/avatar senkron tutulabilir veya sadece users kullanılır)
+  theme                   VARCHAR(10) NOT NULL DEFAULT 'light' CHECK (theme IN ('light', 'dark')),
+  color_theme             VARCHAR(50) NOT NULL DEFAULT 'default',
+  font_size                VARCHAR(20) NOT NULL DEFAULT 'medium' CHECK (font_size IN ('small', 'medium', 'large')),
+  default_category        VARCHAR(100) NOT NULL DEFAULT 'Genel',
+  default_note_color       VARCHAR(50) NOT NULL DEFAULT 'default',
+  default_secure_password   VARCHAR(255),
+  show_stats               BOOLEAN NOT NULL DEFAULT true,
+  updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+COMMENT ON TABLE user_settings IS 'Kullanıcı tema, renk teması, varsayılan kategori/renk, şifreli not varsayılan şifre, istatistik gösterimi.';
+COMMENT ON COLUMN user_settings.color_theme IS 'Frontend ColorThemes: default, blue, green, purple, rose, orange';
+COMMENT ON COLUMN user_settings.default_note_color IS 'Frontend NOTE_COLORS: default, yellow, blue, green, pink, purple';
+
+
+-- -----------------------------------------------------------------------------
+-- 3. NOTLAR
+-- types.ts Note: id, title, content, createdAt, updatedAt, isFavorite,
+-- category, color, attachments[], isSecure, encryptedContent, hasCustomPassword
+-- -----------------------------------------------------------------------------
+CREATE TABLE notes (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id             UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+  title               VARCHAR(500),
+  content             TEXT NOT NULL,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  is_favorite         BOOLEAN NOT NULL DEFAULT false,
+  category            VARCHAR(100) NOT NULL DEFAULT 'Genel',
+  color               VARCHAR(50) NOT NULL DEFAULT 'default',
+  is_secure            BOOLEAN NOT NULL DEFAULT false,
+  encrypted_content   TEXT,
+  has_custom_password  BOOLEAN NOT NULL DEFAULT false
+);
+
+CREATE INDEX idx_notes_user_id ON notes (user_id);
+CREATE INDEX idx_notes_user_updated ON notes (user_id, updated_at DESC);
+CREATE INDEX idx_notes_user_favorite ON notes (user_id, is_favorite) WHERE is_favorite = true;
+CREATE INDEX idx_notes_user_category ON notes (user_id, category);
+CREATE INDEX idx_notes_created_at ON notes (created_at);
+
+COMMENT ON TABLE notes IS 'Kullanıcı notları. Frontend Note tipi ile uyumlu.';
+COMMENT ON COLUMN notes.color IS 'default, yellow, blue, green, pink, purple';
+COMMENT ON COLUMN notes.category IS 'Serbest metin; frontend önerileri: Genel, İş, Kişisel, Eğitim, Alışveriş, Diğer.';
+
+
+-- -----------------------------------------------------------------------------
+-- 4. EKLER (Not ekleri - dosya / resim)
+-- types.ts Attachment: id, name, type, size, data (base64), thumbnail?
+-- -----------------------------------------------------------------------------
+CREATE TABLE attachments (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  note_id     UUID NOT NULL REFERENCES notes (id) ON DELETE CASCADE,
+  name        VARCHAR(255) NOT NULL,
+  type        VARCHAR(100) NOT NULL,
+  size        BIGINT NOT NULL,
+  data        BYTEA,
+  thumbnail   BYTEA,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_attachments_note_id ON attachments (note_id);
+
+COMMENT ON TABLE attachments IS 'Notlara eklenen dosyalar. data: ham binary; backend base64 alıp decode edebilir veya doğrudan binary saklar. thumbnail: görseller için küçük önizleme.';
+
+
+-- -----------------------------------------------------------------------------
+-- 5. OTURUM / REFRESH TOKEN (JWT refresh token rotation)
+-- Giriş sonrası erişim için; access token DB'de tutulmaz (JWT stateless).
+-- -----------------------------------------------------------------------------
+CREATE TABLE refresh_tokens (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id     UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+  token_hash  VARCHAR(255) NOT NULL,
+  expires_at  TIMESTAMPTZ NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX idx_refresh_tokens_token_hash ON refresh_tokens (token_hash);
+CREATE INDEX idx_refresh_tokens_user_id ON refresh_tokens (user_id);
+CREATE INDEX idx_refresh_tokens_expires_at ON refresh_tokens (expires_at);
+
+COMMENT ON TABLE refresh_tokens IS 'JWT refresh token rotation. token_hash: SHA256(refresh_token). Süresi dolan kayıtları periyodik silin.';
+
+
+-- -----------------------------------------------------------------------------
+-- 6. OPSIYONEL: Oturum geçmişi (çoklu cihaz / “bu cihazdan çık” için)
+-- -----------------------------------------------------------------------------
+CREATE TABLE user_sessions (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id     UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+  token_hash  VARCHAR(255) NOT NULL,
+  user_agent  TEXT,
+  ip_address  VARCHAR(45),
+  expires_at  TIMESTAMPTZ NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_user_sessions_user_id ON user_sessions (user_id);
+CREATE INDEX idx_user_sessions_expires_at ON user_sessions (expires_at);
+
+COMMENT ON TABLE user_sessions IS 'İsteğe bağlı: Aktif oturumlar; “tüm cihazlardan çık” için kullanılabilir.';
+
+
+-- -----------------------------------------------------------------------------
+-- TRIGGER: users.updated_at güncelleme
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION set_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER users_updated_at
+  BEFORE UPDATE ON users
+  FOR EACH ROW EXECUTE PROCEDURE set_updated_at();
+
+CREATE TRIGGER user_settings_updated_at
+  BEFORE UPDATE ON user_settings
+  FOR EACH ROW EXECUTE PROCEDURE set_updated_at();
+
+CREATE TRIGGER notes_updated_at
+  BEFORE UPDATE ON notes
+  FOR EACH ROW EXECUTE PROCEDURE set_updated_at();
+
+
+-- -----------------------------------------------------------------------------
+-- Kullanıcı oluşturulduğunda varsayılan user_settings kaydı (opsiyonel)
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION create_user_settings_on_signup()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO user_settings (user_id)
+  VALUES (NEW.id);
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER after_user_insert
+  AFTER INSERT ON users
+  FOR EACH ROW EXECUTE PROCEDURE create_user_settings_on_signup();
+
+
+-- =============================================================================
+-- ÖZET: Tablolar ve frontend karşılıkları
+-- =============================================================================
+-- users             → Kayıt/Giriş (username, email, password_hash, avatar)
+-- user_settings     → Tema (theme, color_theme), font_size, default_category,
+--                     default_note_color, default_secure_password, show_stats
+-- notes             → Notlar (title, content, category, color, is_favorite,
+--                     is_secure, encrypted_content, has_custom_password)
+-- attachments       → Not ekleri (name, type, size, data, thumbnail)
+-- refresh_tokens    → JWT refresh token (giriş sonrası)
+-- user_sessions     → Opsiyonel: çoklu oturum yönetimi
+-- =============================================================================
+
+
+-- =============================================================================
+-- MYSQL KULLANACAKSANIZ (kısa uyarlama notları)
+-- =============================================================================
+-- • UUID yerine: id CHAR(36) PRIMARY KEY DEFAULT (UUID()) veya BINARY(16) + UNHEX(REPLACE(UUID(),'-',''))
+-- • gen_random_uuid() → UUID() veya uygulama tarafında UUID üretip gönderin
+-- • SERIAL / BIGSERIAL → BIGINT AUTO_INCREMENT
+-- • TIMESTAMPTZ → DATETIME(3) veya TIMESTAMP
+-- • BOOLEAN → TINYINT(1)
+-- • BYTEA → BLOB veya LONGBLOB
+-- • TEXT → TEXT / LONGTEXT (büyük alanlar için)
+-- • CHECK (...) → MySQL 8.0'da desteklenir; daha eski sürümde uygulama tarafında kontrol edin
+-- • Trigger: BEFORE UPDATE ... EXECUTE PROCEDURE → MySQL trigger syntax farklıdır; ayrı CREATE TRIGGER ile yazın
+-- • REFERENCES / ON DELETE CASCADE → InnoDB ile aynı şekilde kullanılabilir
+-- =============================================================================

@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/api/attachments")
+@RequestMapping("/v1/attachments")
 @RequiredArgsConstructor
 public class AttachmentController {
 

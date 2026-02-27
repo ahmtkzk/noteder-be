@@ -6,6 +6,8 @@ import com.noteder.be.entity.UserSettings;
 import com.noteder.be.repository.UserRepository;
 import com.noteder.be.repository.UserSettingsRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,7 +28,7 @@ public class UserService {
         if (userRepository.existsByEmail(user.getEmail())) {
             throw new RuntimeException("Email already exists");
         }
-        if (userRepository.existsByUsername(user.getUsername())) {
+        if (userRepository.existsByUsername(user.getRealUsername())) {
             throw new RuntimeException("Username already exists");
         }
 
@@ -56,10 +58,14 @@ public class UserService {
         return mapToDto(user);
     }
 
+    public Page<UserDto> getAllUsers(Pageable pageable) {
+        return userRepository.findAll(pageable).map(this::mapToDto);
+    }
+
     private UserDto mapToDto(User user) {
         return UserDto.builder()
                 .id(user.getId())
-                .username(user.getUsername())
+                .username(user.getRealUsername())
                 .email(user.getEmail())
                 .avatar(user.getAvatar())
                 .createdAt(user.getCreatedAt())

@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/api/user-sessions")
+@RequestMapping("/v1/user-sessions")
 @RequiredArgsConstructor
 public class UserSessionController {
 

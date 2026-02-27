@@ -10,7 +10,7 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/api/refresh-tokens")
+@RequestMapping("/v1/refresh-tokens")
 @RequiredArgsConstructor
 public class RefreshTokenController {
 

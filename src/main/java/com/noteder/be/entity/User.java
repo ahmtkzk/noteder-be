@@ -59,7 +59,11 @@ public class User implements UserDetails {
 
     @Override
     public String getUsername() {
-        return username; // or email, depending on your login strategy
+        return email; // Changed to email to match UserDetailsService
+    }
+
+    public String getRealUsername() {
+        return username;
     }
 
     @Override

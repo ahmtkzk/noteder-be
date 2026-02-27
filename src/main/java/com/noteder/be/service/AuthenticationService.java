@@ -93,7 +93,7 @@ public class AuthenticationService {
     private UserDto mapToDto(User user) {
         return UserDto.builder()
                 .id(user.getId())
-                .username(user.getUsername())
+                .username(user.getRealUsername())
                 .email(user.getEmail())
                 .avatar(user.getAvatar())
                 .createdAt(user.getCreatedAt())

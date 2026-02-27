@@ -1,3 +1,25 @@
 spring:
   application:
     name: NotEder Backend
+  datasource:
+    url: jdbc:postgresql://91.98.225.207:5455/notederpg
+    username: admin
+    password: password123
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    database: POSTGRESQL
+    show-sql: true
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 20MB
+
+jwt:
+  secret: 404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970
+  expiration: 900000 # 15 minutes
+  refresh-expiration: 604800000 # 7 days

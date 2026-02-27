@@ -6,6 +6,7 @@ import com.noteder.be.entity.UserSettings;
 import com.noteder.be.repository.UserRepository;
 import com.noteder.be.repository.UserSettingsRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -17,6 +18,7 @@ public class UserService {
 
     private final UserRepository userRepository;
     private final UserSettingsRepository userSettingsRepository;
+    private final PasswordEncoder passwordEncoder;
 
     @Transactional
     public UserDto createUser(User user) {
@@ -27,6 +29,9 @@ public class UserService {
         if (userRepository.existsByUsername(user.getUsername())) {
             throw new RuntimeException("Username already exists");
         }
+
+        // Encode password
+        user.setPasswordHash(passwordEncoder.encode(user.getPasswordHash()));
 
         User savedUser = userRepository.save(user);
 

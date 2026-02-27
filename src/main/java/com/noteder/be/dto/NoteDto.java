@@ -6,6 +6,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
 
 @Data
@@ -25,4 +26,8 @@ public class NoteDto {
     private boolean isSecure;
     private String encryptedContent;
     private boolean hasCustomPassword;
+
+    // Attachments metadata
+    private List<AttachmentDto> attachments;
+    private int attachmentsCount;
 }

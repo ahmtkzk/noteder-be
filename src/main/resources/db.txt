@@ -1,14 +1,38 @@
--- =============================================================================
--- NOTEDER / PrivateNote - Veritabanı şema ve CREATE scriptleri
--- Frontend (noteder-ui) ile uyumlu tablolar. Backend'i yazarken bu yapıyı kullanın.
--- Veritabanı: PostgreSQL (MySQL kullanıyorsanız dipnotlara bakın)
--- =============================================================================
+-- ============================================================================
+-- NOTEDER / PrivateNote - Backend Veritabanı Scriptleri
+-- ============================================================================
+-- Bu dosya, noteder-ui frontend’i ile tam uyumlu bir Spring Boot backend için
+-- PostgreSQL veritabanı scriptlerini içerir.
+--
+-- Önerilen veritabanı: PostgreSQL 14+
+-- (MySQL uyarlama notları dosyanın en sonunda yer alıyor.)
+--
+-- Genel Tasarım:
+-- - users          : Kullanıcı kayıt / giriş
+-- - user_settings  : Kullanıcıya özel tema / görünüm / varsayılan tercihleri
+-- - notes          : Notlar (şifreli veya normal)
+-- - attachments    : Not ekleri (dosya, resim vb.)
+-- - refresh_tokens : JWT refresh token rotasyonu
+-- - user_sessions  : İsteğe bağlı çoklu oturum yönetimi
+--
+-- Önemli:
+-- - UUID alanları için PostgreSQL’de gen_random_uuid() fonksiyonunu
+--   sağlayan pgcrypto uzantısını aktifleştirdiğinizden emin olun:
+--     CREATE EXTENSION IF NOT EXISTS pgcrypto;
+-- ============================================================================
 
--- -----------------------------------------------------------------------------
+-- ----------------------------------------------------------------------------
+-- 0. GEREKLİ UZANTILAR
+-- ----------------------------------------------------------------------------
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+
+-- ----------------------------------------------------------------------------
 -- 1. KULLANICILAR (Kayıt / Giriş)
--- Auth ekranı: username (kayıtta), email, password
--- -----------------------------------------------------------------------------
-CREATE TABLE users (
+-- Auth ekranı: username, email, password (frontend şimdilik localStorage
+-- kullanıyor ama backend’e geçtiğinizde bu tablo kullanılacak)
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS users (
   id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   username          VARCHAR(100) NOT NULL,
   email             VARCHAR(255) NOT NULL UNIQUE,
@@ -18,74 +42,88 @@ CREATE TABLE users (
   updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE UNIQUE INDEX idx_users_email ON users (LOWER(email));
-CREATE UNIQUE INDEX idx_users_username ON users (LOWER(username));
-CREATE INDEX idx_users_created_at ON users (created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users (LOWER(email));
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users (LOWER(username));
+CREATE INDEX IF NOT EXISTS idx_users_created_at ON users (created_at);
 
 COMMENT ON TABLE users IS 'Kayıt olan kullanıcılar. Auth: username, email, password_hash.';
-COMMENT ON COLUMN users.avatar IS 'Base64 data URL veya CDN URL. Profil ayarlarından yüklenir.';
+COMMENT ON COLUMN users.avatar IS 'Base64 data URL veya CDN/objeler deposu URL. Profil ayarlarından yüklenir.';
 
 
--- -----------------------------------------------------------------------------
--- 2. KULLANICI AYARLARI (Profil + Tema + Uygulama tercihleri)
--- ProfileSettings: username, email, avatar, fontSize, defaultCategory,
--- defaultNoteColor, colorTheme, theme (dark/light), defaultSecurePassword
--- showStats: NotesList içinde localStorage showStats
--- -----------------------------------------------------------------------------
-CREATE TABLE user_settings (
+-- ----------------------------------------------------------------------------
+-- 2. KULLANICI AYARLARI (Profil + Tema + Uygulama Tercihleri)
+-- ProfileSettings.tsx ile uyumlu:
+--   - fontSize           → font_size
+--   - defaultCategory    → default_category
+--   - defaultNoteColor   → default_note_color
+--   - colorTheme         → color_theme
+--   - defaultSecurePassword → default_secure_password
+--   - showStats (localStorage) → show_stats (opsiyonel backend senkronu)
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS user_settings (
   user_id                 UUID PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,
-  -- Profil (users tablosunda da var; burada kullanıcının görüntülediği ad/email/avatar senkron tutulabilir veya sadece users kullanılır)
   theme                   VARCHAR(10) NOT NULL DEFAULT 'light' CHECK (theme IN ('light', 'dark')),
   color_theme             VARCHAR(50) NOT NULL DEFAULT 'default',
-  font_size                VARCHAR(20) NOT NULL DEFAULT 'medium' CHECK (font_size IN ('small', 'medium', 'large')),
+  font_size               VARCHAR(20) NOT NULL DEFAULT 'medium' CHECK (font_size IN ('small', 'medium', 'large')),
   default_category        VARCHAR(100) NOT NULL DEFAULT 'Genel',
-  default_note_color       VARCHAR(50) NOT NULL DEFAULT 'default',
-  default_secure_password   VARCHAR(255),
-  show_stats               BOOLEAN NOT NULL DEFAULT true,
-  updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  default_note_color      VARCHAR(50) NOT NULL DEFAULT 'default',
+  default_secure_password VARCHAR(255),
+  show_stats              BOOLEAN NOT NULL DEFAULT true,
+  updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 COMMENT ON TABLE user_settings IS 'Kullanıcı tema, renk teması, varsayılan kategori/renk, şifreli not varsayılan şifre, istatistik gösterimi.';
-COMMENT ON COLUMN user_settings.color_theme IS 'Frontend ColorThemes: default, blue, green, purple, rose, orange';
-COMMENT ON COLUMN user_settings.default_note_color IS 'Frontend NOTE_COLORS: default, yellow, blue, green, pink, purple';
+COMMENT ON COLUMN user_settings.color_theme IS 'Frontend ColorThemes: default, blue, green, purple, rose, orange.';
+COMMENT ON COLUMN user_settings.default_note_color IS 'Frontend NOTE_COLORS: default, yellow, blue, green, pink, purple.';
 
 
--- -----------------------------------------------------------------------------
+-- ----------------------------------------------------------------------------
 -- 3. NOTLAR
--- types.ts Note: id, title, content, createdAt, updatedAt, isFavorite,
--- category, color, attachments[], isSecure, encryptedContent, hasCustomPassword
--- -----------------------------------------------------------------------------
-CREATE TABLE notes (
-  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id             UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
-  title               VARCHAR(500),
-  content             TEXT NOT NULL,
-  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  is_favorite         BOOLEAN NOT NULL DEFAULT false,
-  category            VARCHAR(100) NOT NULL DEFAULT 'Genel',
-  color               VARCHAR(50) NOT NULL DEFAULT 'default',
+-- Frontend types.ts Note ile bire bir uyumlu:
+--   id, title?, content, createdAt, updatedAt, isFavorite, category,
+--   color, isSecure?, encryptedContent?, hasCustomPassword?
+-- attachments[] ayrı tabloda saklanır (bkz. attachments).
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS notes (
+  id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id              UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+  title                VARCHAR(500),
+  content              TEXT NOT NULL,
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  is_favorite          BOOLEAN NOT NULL DEFAULT false,
+  category             VARCHAR(100) NOT NULL DEFAULT 'Genel',
+  color                VARCHAR(50) NOT NULL DEFAULT 'default',
   is_secure            BOOLEAN NOT NULL DEFAULT false,
-  encrypted_content   TEXT,
+  encrypted_content    TEXT,
   has_custom_password  BOOLEAN NOT NULL DEFAULT false
 );
 
-CREATE INDEX idx_notes_user_id ON notes (user_id);
-CREATE INDEX idx_notes_user_updated ON notes (user_id, updated_at DESC);
-CREATE INDEX idx_notes_user_favorite ON notes (user_id, is_favorite) WHERE is_favorite = true;
-CREATE INDEX idx_notes_user_category ON notes (user_id, category);
-CREATE INDEX idx_notes_created_at ON notes (created_at);
+CREATE INDEX IF NOT EXISTS idx_notes_user_id          ON notes (user_id);
+CREATE INDEX IF NOT EXISTS idx_notes_user_updated     ON notes (user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notes_user_favorite    ON notes (user_id, is_favorite) WHERE is_favorite = true;
+CREATE INDEX IF NOT EXISTS idx_notes_user_category    ON notes (user_id, category);
+CREATE INDEX IF NOT EXISTS idx_notes_created_at       ON notes (created_at);
 
 COMMENT ON TABLE notes IS 'Kullanıcı notları. Frontend Note tipi ile uyumlu.';
-COMMENT ON COLUMN notes.color IS 'default, yellow, blue, green, pink, purple';
-COMMENT ON COLUMN notes.category IS 'Serbest metin; frontend önerileri: Genel, İş, Kişisel, Eğitim, Alışveriş, Diğer.';
+COMMENT ON COLUMN notes.color IS 'default, yellow, blue, green, pink, purple.';
+COMMENT ON COLUMN notes.category IS 'Serbest metin; önerilen: Genel, İş, Kişisel, Eğitim, Alışveriş, Diğer.';
 
 
--- -----------------------------------------------------------------------------
+-- ----------------------------------------------------------------------------
 -- 4. EKLER (Not ekleri - dosya / resim)
--- types.ts Attachment: id, name, type, size, data (base64), thumbnail?
--- -----------------------------------------------------------------------------
-CREATE TABLE attachments (
+-- Frontend types.ts Attachment:
+--   id, name, type, size, data (base64), thumbnail?
+--
+-- Backend tarafında:
+--   - data       → BYTEA (ham binary; base64 decode edilerek yazılır)
+--   - thumbnail  → BYTEA (görsel küçük önizleme; opsiyonel)
+--
+-- İPUCU:
+-- - Çok büyük dosyalar için doğrudan DB’de saklamak yerine
+--   object storage (S3, GCS vs.) kullanıp sadece URL saklamanız önerilir.
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS attachments (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   note_id     UUID NOT NULL REFERENCES notes (id) ON DELETE CASCADE,
   name        VARCHAR(255) NOT NULL,
@@ -96,16 +134,17 @@ CREATE TABLE attachments (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_attachments_note_id ON attachments (note_id);
+CREATE INDEX IF NOT EXISTS idx_attachments_note_id ON attachments (note_id);
 
-COMMENT ON TABLE attachments IS 'Notlara eklenen dosyalar. data: ham binary; backend base64 alıp decode edebilir veya doğrudan binary saklar. thumbnail: görseller için küçük önizleme.';
+COMMENT ON TABLE attachments IS 'Notlara eklenen dosyalar. data: ham binary; backend base64 alıp decode eder. thumbnail: görseller için küçük önizleme.';
 
 
--- -----------------------------------------------------------------------------
--- 5. OTURUM / REFRESH TOKEN (JWT refresh token rotation)
--- Giriş sonrası erişim için; access token DB'de tutulmaz (JWT stateless).
--- -----------------------------------------------------------------------------
-CREATE TABLE refresh_tokens (
+-- ----------------------------------------------------------------------------
+-- 5. JWT REFRESH TOKEN TABLOSU
+-- Access token’lar DB’de tutulmaz (JWT stateless). Sadece refresh token’lar
+-- hash’lenmiş şekilde saklanır (ör: SHA-256).
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS refresh_tokens (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id     UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
   token_hash  VARCHAR(255) NOT NULL,
@@ -113,17 +152,18 @@ CREATE TABLE refresh_tokens (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE UNIQUE INDEX idx_refresh_tokens_token_hash ON refresh_tokens (token_hash);
-CREATE INDEX idx_refresh_tokens_user_id ON refresh_tokens (user_id);
-CREATE INDEX idx_refresh_tokens_expires_at ON refresh_tokens (expires_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_refresh_tokens_token_hash ON refresh_tokens (token_hash);
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON refresh_tokens (user_id);
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires_at ON refresh_tokens (expires_at);
 
 COMMENT ON TABLE refresh_tokens IS 'JWT refresh token rotation. token_hash: SHA256(refresh_token). Süresi dolan kayıtları periyodik silin.';
 
 
--- -----------------------------------------------------------------------------
--- 6. OPSIYONEL: Oturum geçmişi (çoklu cihaz / “bu cihazdan çık” için)
--- -----------------------------------------------------------------------------
-CREATE TABLE user_sessions (
+-- ----------------------------------------------------------------------------
+-- 6. OPSİYONEL: OTURUM GEÇMİŞİ (çoklu cihaz / “tüm cihazlardan çık”)
+-- İsterseniz kullanın; istemezseniz uygulamada bu tabloyu yok sayabilirsiniz.
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS user_sessions (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id     UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
   token_hash  VARCHAR(255) NOT NULL,
@@ -133,15 +173,17 @@ CREATE TABLE user_sessions (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_user_sessions_user_id ON user_sessions (user_id);
-CREATE INDEX idx_user_sessions_expires_at ON user_sessions (expires_at);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id    ON user_sessions (user_id);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_expires_at ON user_sessions (expires_at);
 
 COMMENT ON TABLE user_sessions IS 'İsteğe bağlı: Aktif oturumlar; “tüm cihazlardan çık” için kullanılabilir.';
 
 
--- -----------------------------------------------------------------------------
--- TRIGGER: users.updated_at güncelleme
--- -----------------------------------------------------------------------------
+-- ----------------------------------------------------------------------------
+-- 7. ORTAK updated_at TRIGGER FONKSİYONU
+-- users, user_settings, notes gibi tablolarda updated_at alanını otomatik
+-- güncellemek için kullanılır.
+-- ----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION set_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -150,22 +192,40 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER users_updated_at
-  BEFORE UPDATE ON users
-  FOR EACH ROW EXECUTE PROCEDURE set_updated_at();
+-- Trigger tanımları
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger WHERE tgname = 'users_updated_at'
+  ) THEN
+    CREATE TRIGGER users_updated_at
+      BEFORE UPDATE ON users
+      FOR EACH ROW EXECUTE PROCEDURE set_updated_at();
+  END IF;
 
-CREATE TRIGGER user_settings_updated_at
-  BEFORE UPDATE ON user_settings
-  FOR EACH ROW EXECUTE PROCEDURE set_updated_at();
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger WHERE tgname = 'user_settings_updated_at'
+  ) THEN
+    CREATE TRIGGER user_settings_updated_at
+      BEFORE UPDATE ON user_settings
+      FOR EACH ROW EXECUTE PROCEDURE set_updated_at();
+  END IF;
 
-CREATE TRIGGER notes_updated_at
-  BEFORE UPDATE ON notes
-  FOR EACH ROW EXECUTE PROCEDURE set_updated_at();
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger WHERE tgname = 'notes_updated_at'
+  ) THEN
+    CREATE TRIGGER notes_updated_at
+      BEFORE UPDATE ON notes
+      FOR EACH ROW EXECUTE PROCEDURE set_updated_at();
+  END IF;
+END;
+$$;
 
 
--- -----------------------------------------------------------------------------
--- Kullanıcı oluşturulduğunda varsayılan user_settings kaydı (opsiyonel)
--- -----------------------------------------------------------------------------
+-- ----------------------------------------------------------------------------
+-- 8. KULLANICI OLUŞTURULDUĞUNDA VARSAYILAN user_settings KAYDI
+-- Sign-up sonrasında otomatik olarak user_settings satırı açar.
+-- ----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION create_user_settings_on_signup()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -175,36 +235,72 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER after_user_insert
-  AFTER INSERT ON users
-  FOR EACH ROW EXECUTE PROCEDURE create_user_settings_on_signup();
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger WHERE tgname = 'after_user_insert'
+  ) THEN
+    CREATE TRIGGER after_user_insert
+      AFTER INSERT ON users
+      FOR EACH ROW EXECUTE PROCEDURE create_user_settings_on_signup();
+  END IF;
+END;
+$$;
 
 
--- =============================================================================
--- ÖZET: Tablolar ve frontend karşılıkları
--- =============================================================================
--- users             → Kayıt/Giriş (username, email, password_hash, avatar)
--- user_settings     → Tema (theme, color_theme), font_size, default_category,
---                     default_note_color, default_secure_password, show_stats
--- notes             → Notlar (title, content, category, color, is_favorite,
---                     is_secure, encrypted_content, has_custom_password)
--- attachments       → Not ekleri (name, type, size, data, thumbnail)
--- refresh_tokens    → JWT refresh token (giriş sonrası)
--- user_sessions     → Opsiyonel: çoklu oturum yönetimi
--- =============================================================================
+-- ============================================================================
+-- 9. TABLO ÖZETİ (Frontend Karşılıkları)
+-- ============================================================================
+-- users
+--   → Auth / Profil: username, email, password_hash, avatar, created_at, updated_at
+--
+-- user_settings
+--   → ProfileSettings + ThemeContext:
+--      - theme, color_theme
+--      - font_size
+--      - default_category
+--      - default_note_color
+--      - default_secure_password
+--      - show_stats
+--
+-- notes
+--   → Note tipi:
+--      - id, user_id
+--      - title, content
+--      - created_at, updated_at
+--      - is_favorite, category, color
+--      - is_secure, encrypted_content, has_custom_password
+--
+-- attachments
+--   → Attachment tipi:
+--      - id, note_id
+--      - name, type, size
+--      - data (binary), thumbnail (binary)
+--
+-- refresh_tokens
+--   → JWT refresh token rotation
+--
+-- user_sessions
+--   → Opsiyonel çoklu oturum / cihaz yönetimi
+-- ============================================================================
 
 
--- =============================================================================
--- MYSQL KULLANACAKSANIZ (kısa uyarlama notları)
--- =============================================================================
--- • UUID yerine: id CHAR(36) PRIMARY KEY DEFAULT (UUID()) veya BINARY(16) + UNHEX(REPLACE(UUID(),'-',''))
--- • gen_random_uuid() → UUID() veya uygulama tarafında UUID üretip gönderin
--- • SERIAL / BIGSERIAL → BIGINT AUTO_INCREMENT
--- • TIMESTAMPTZ → DATETIME(3) veya TIMESTAMP
--- • BOOLEAN → TINYINT(1)
--- • BYTEA → BLOB veya LONGBLOB
--- • TEXT → TEXT / LONGTEXT (büyük alanlar için)
--- • CHECK (...) → MySQL 8.0'da desteklenir; daha eski sürümde uygulama tarafında kontrol edin
--- • Trigger: BEFORE UPDATE ... EXECUTE PROCEDURE → MySQL trigger syntax farklıdır; ayrı CREATE TRIGGER ile yazın
--- • REFERENCES / ON DELETE CASCADE → InnoDB ile aynı şekilde kullanılabilir
--- =============================================================================
+-- ============================================================================
+-- 10. MYSQL KULLANACAKSANIZ KISA UYARLAMA NOTLARI
+-- ============================================================================
+-- - UUID:
+--     id CHAR(36) PRIMARY KEY DEFAULT (UUID())
+--   veya
+--     id BINARY(16) PRIMARY KEY DEFAULT (UNHEX(REPLACE(UUID(),'-','')))
+--
+-- - gen_random_uuid()  → UUID() (veya uygulama tarafında UUID üretip gönderin)
+-- - TIMESTAMPTZ        → DATETIME(3) veya TIMESTAMP
+-- - BOOLEAN            → TINYINT(1)
+-- - BYTEA              → BLOB / MEDIUMBLOB / LONGBLOB (dosya boyutuna göre)
+-- - CHECK(...)         → MySQL 8+ destekler; daha eski sürümlerde iş mantığı
+--                         uygulama katmanında kontrol edilmeli.
+-- - Trigger sözdizimi   → MySQL trigger syntax’ına göre yeniden yazılmalı.
+-- - REFERENCES ... ON DELETE CASCADE
+--                         → InnoDB ile kullanılabilir.
+-- ============================================================================
+

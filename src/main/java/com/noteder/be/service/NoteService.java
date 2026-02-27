@@ -1,8 +1,11 @@
 package com.noteder.be.service;
 
+import com.noteder.be.dto.AttachmentDto;
 import com.noteder.be.dto.NoteDto;
+import com.noteder.be.entity.Attachment;
 import com.noteder.be.entity.Note;
 import com.noteder.be.entity.User;
+import com.noteder.be.repository.AttachmentRepository;
 import com.noteder.be.repository.NoteRepository;
 import com.noteder.be.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -19,6 +22,7 @@ public class NoteService {
 
     private final NoteRepository noteRepository;
     private final UserRepository userRepository;
+    private final AttachmentRepository attachmentRepository;
 
     @Transactional
     public NoteDto createNote(UUID userId, NoteDto noteDto) {
@@ -38,6 +42,22 @@ public class NoteService {
                 .build();
 
         Note savedNote = noteRepository.save(note);
+
+        // Handle attachments if any
+        if (noteDto.getAttachments() != null && !noteDto.getAttachments().isEmpty()) {
+            List<Attachment> attachments = noteDto.getAttachments().stream()
+                    .map(attDto -> Attachment.builder()
+                            .note(savedNote)
+                            .name(attDto.getName())
+                            .type(attDto.getType())
+                            .size(attDto.getSize())
+                            .data(attDto.getData())
+                            .thumbnail(attDto.getThumbnail())
+                            .build())
+                    .collect(Collectors.toList());
+            attachmentRepository.saveAll(attachments);
+        }
+
         return mapToDto(savedNote);
     }
 
@@ -68,6 +88,10 @@ public class NoteService {
         note.setHasCustomPassword(noteDto.isHasCustomPassword());
 
         Note updatedNote = noteRepository.save(note);
+
+        // Note: Attachment update logic is simplified here. 
+        // In a real scenario, you might want to diff and update attachments.
+        
         return mapToDto(updatedNote);
     }
 
@@ -77,6 +101,20 @@ public class NoteService {
     }
 
     private NoteDto mapToDto(Note note) {
+        List<Attachment> attachments = attachmentRepository.findByNoteId(note.getId());
+        List<AttachmentDto> attachmentDtos = attachments.stream()
+                .map(att -> AttachmentDto.builder()
+                        .id(att.getId())
+                        .noteId(att.getNote().getId())
+                        .name(att.getName())
+                        .type(att.getType())
+                        .size(att.getSize())
+                        // Don't return full data in list view to save bandwidth
+                        .thumbnail(att.getThumbnail())
+                        .createdAt(att.getCreatedAt())
+                        .build())
+                .collect(Collectors.toList());
+
         return NoteDto.builder()
                 .id(note.getId())
                 .userId(note.getUser().getId())
@@ -90,6 +128,8 @@ public class NoteService {
                 .isSecure(note.isSecure())
                 .encryptedContent(note.getEncryptedContent())
                 .hasCustomPassword(note.isHasCustomPassword())
+                .attachments(attachmentDtos)
+                .attachmentsCount(attachmentDtos.size())
                 .build();
     }
 }

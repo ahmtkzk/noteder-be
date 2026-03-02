@@ -11,12 +11,14 @@ import com.noteder.be.repository.UserRepository;
 import com.noteder.be.repository.UserSettingsRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 
 @Service
 @RequiredArgsConstructor
@@ -29,6 +31,12 @@ public class AuthenticationService {
     private final AuthenticationManager authenticationManager;
     private final RefreshTokenService refreshTokenService;
     private final UserSessionService userSessionService;
+
+    @Value("${jwt.refresh-expiration}")
+    private long refreshExpiration;
+
+    @Value("${jwt.remember-me-expiration}")
+    private long rememberMeExpiration;
 
     public AuthenticationResponse register(RegisterRequest request, HttpServletRequest servletRequest) {
         if (userRepository.existsByEmail(request.getEmail())) {
@@ -54,7 +62,7 @@ public class AuthenticationService {
         var jwtToken = jwtService.generateToken(savedUser);
         var refreshToken = jwtService.generateRefreshToken(savedUser, false);
 
-        LocalDateTime expiresAt = LocalDateTime.now().plusDays(1);
+        LocalDateTime expiresAt = LocalDateTime.now().plus(refreshExpiration, ChronoUnit.MILLIS);
         refreshTokenService.createRefreshToken(savedUser.getId(), refreshToken, expiresAt);
 
         String userAgent = servletRequest.getHeader("User-Agent");
@@ -90,7 +98,8 @@ public class AuthenticationService {
         var jwtToken = jwtService.generateToken(user);
         var refreshToken = jwtService.generateRefreshToken(user, request.isRememberMe());
 
-        LocalDateTime expiresAt = LocalDateTime.now().plusDays(request.isRememberMe() ? 30 : 1);
+        long expirationTime = request.isRememberMe() ? rememberMeExpiration : refreshExpiration;
+        LocalDateTime expiresAt = LocalDateTime.now().plus(expirationTime, ChronoUnit.MILLIS);
         refreshTokenService.createRefreshToken(user.getId(), refreshToken, expiresAt);
 
         String userAgent = servletRequest.getHeader("User-Agent");

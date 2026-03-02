@@ -1,5 +1,6 @@
 package com.noteder.be.controller;
 
+import com.noteder.be.dto.UpdateUserRequest;
 import com.noteder.be.dto.UserDto;
 import com.noteder.be.entity.User;
 import com.noteder.be.service.UserService;
@@ -56,5 +57,24 @@ public class UserController {
             @Parameter(description = "Pagination information") Pageable pageable
     ) {
         return ResponseEntity.ok(userService.getAllUsers(pageable));
+    }
+
+    @Operation(
+            summary = "Update user profile and settings",
+            description = "Update user's username, avatar, and settings.",
+            responses = {
+                    @ApiResponse(
+                            responseCode = "200",
+                            description = "Successful update",
+                            content = @Content(mediaType = "application/json", schema = @Schema(implementation = UserDto.class))
+                    )
+            }
+    )
+    @PutMapping("/{id}")
+    public ResponseEntity<UserDto> updateUser(
+            @PathVariable UUID id,
+            @RequestBody UpdateUserRequest request
+    ) {
+        return ResponseEntity.ok(userService.updateUser(id, request));
     }
 }

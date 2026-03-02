@@ -7,10 +7,10 @@ import lombok.NoArgsConstructor;
 
 @Data
 @Builder
-@AllArgsConstructor
 @NoArgsConstructor
-public class AuthenticationRequest {
-    private String emailOrUsername;
-    private String password;
-    private boolean rememberMe;
+@AllArgsConstructor
+public class UpdateUserRequest {
+    private String username;
+    private String avatar;
+    private UserSettingsDto settings;
 }

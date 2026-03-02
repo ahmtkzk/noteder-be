@@ -2,17 +2,21 @@ package com.noteder.be.service;
 
 import com.noteder.be.dto.AuthenticationRequest;
 import com.noteder.be.dto.AuthenticationResponse;
+import com.noteder.be.dto.RefreshTokenDto;
 import com.noteder.be.dto.RegisterRequest;
 import com.noteder.be.dto.UserDto;
 import com.noteder.be.entity.User;
 import com.noteder.be.entity.UserSettings;
 import com.noteder.be.repository.UserRepository;
 import com.noteder.be.repository.UserSettingsRepository;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+
+import java.time.LocalDateTime;
 
 @Service
 @RequiredArgsConstructor
@@ -23,8 +27,10 @@ public class AuthenticationService {
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
     private final AuthenticationManager authenticationManager;
+    private final RefreshTokenService refreshTokenService;
+    private final UserSessionService userSessionService;
 
-    public AuthenticationResponse register(RegisterRequest request) {
+    public AuthenticationResponse register(RegisterRequest request, HttpServletRequest servletRequest) {
         if (userRepository.existsByEmail(request.getEmail())) {
             throw new RuntimeException("Email already exists");
         }
@@ -40,16 +46,20 @@ public class AuthenticationService {
 
         var savedUser = userRepository.save(user);
 
-        // Create default settings
         UserSettings settings = UserSettings.builder()
                 .user(savedUser)
                 .build();
         userSettingsRepository.save(settings);
 
         var jwtToken = jwtService.generateToken(savedUser);
-        var refreshToken = jwtService.generateRefreshToken(savedUser);
+        var refreshToken = jwtService.generateRefreshToken(savedUser, false);
 
-        // TODO: Save refresh token to DB
+        LocalDateTime expiresAt = LocalDateTime.now().plusDays(1);
+        refreshTokenService.createRefreshToken(savedUser.getId(), refreshToken, expiresAt);
+
+        String userAgent = servletRequest.getHeader("User-Agent");
+        String ipAddress = servletRequest.getRemoteAddr();
+        userSessionService.createSession(savedUser.getId(), refreshToken, userAgent, ipAddress, expiresAt);
 
         return AuthenticationResponse.builder()
                 .accessToken(jwtToken)
@@ -58,10 +68,9 @@ public class AuthenticationService {
                 .build();
     }
 
-    public AuthenticationResponse authenticate(AuthenticationRequest request) {
+    public AuthenticationResponse authenticate(AuthenticationRequest request, HttpServletRequest servletRequest) {
         String email = request.getEmailOrUsername();
 
-        // If input doesn't look like an email, try to resolve it as a username
         if (!email.contains("@")) {
             var user = userRepository.findByUsername(request.getEmailOrUsername())
                     .orElseThrow(() -> new RuntimeException("User not found"));
@@ -79,12 +88,40 @@ public class AuthenticationService {
                 .orElseThrow();
 
         var jwtToken = jwtService.generateToken(user);
-        var refreshToken = jwtService.generateRefreshToken(user);
+        var refreshToken = jwtService.generateRefreshToken(user, request.isRememberMe());
 
-        // TODO: Save/Update refresh token in DB
+        LocalDateTime expiresAt = LocalDateTime.now().plusDays(request.isRememberMe() ? 30 : 1);
+        refreshTokenService.createRefreshToken(user.getId(), refreshToken, expiresAt);
+
+        String userAgent = servletRequest.getHeader("User-Agent");
+        String ipAddress = servletRequest.getRemoteAddr();
+        userSessionService.createSession(user.getId(), refreshToken, userAgent, ipAddress, expiresAt);
 
         return AuthenticationResponse.builder()
                 .accessToken(jwtToken)
+                .tokenType("Bearer")
+                .user(mapToDto(user))
+                .build();
+    }
+
+    public AuthenticationResponse refreshToken(String refreshToken) {
+        RefreshTokenDto storedToken = refreshTokenService.getByTokenHash(refreshToken);
+        
+        if (storedToken.getExpiresAt().isBefore(LocalDateTime.now())) {
+            throw new RuntimeException("Refresh token expired");
+        }
+
+        User user = userRepository.findById(storedToken.getUserId())
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        if (!jwtService.isTokenValid(refreshToken, user)) {
+             throw new RuntimeException("Invalid refresh token");
+        }
+
+        var newAccessToken = jwtService.generateToken(user);
+        
+        return AuthenticationResponse.builder()
+                .accessToken(newAccessToken)
                 .tokenType("Bearer")
                 .user(mapToDto(user))
                 .build();

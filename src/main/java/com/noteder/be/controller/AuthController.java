@@ -4,6 +4,7 @@ import com.noteder.be.dto.AuthenticationRequest;
 import com.noteder.be.dto.AuthenticationResponse;
 import com.noteder.be.dto.RegisterRequest;
 import com.noteder.be.service.AuthenticationService;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -20,23 +21,24 @@ public class AuthController {
 
     @PostMapping("/register")
     public ResponseEntity<AuthenticationResponse> register(
-            @RequestBody RegisterRequest request
+            @RequestBody RegisterRequest request,
+            HttpServletRequest servletRequest
     ) {
-        return ResponseEntity.ok(service.register(request));
+        return ResponseEntity.ok(service.register(request, servletRequest));
     }
 
     @PostMapping("/login")
     public ResponseEntity<AuthenticationResponse> authenticate(
-            @RequestBody AuthenticationRequest request
+            @RequestBody AuthenticationRequest request,
+            HttpServletRequest servletRequest
     ) {
-        return ResponseEntity.ok(service.authenticate(request));
+        return ResponseEntity.ok(service.authenticate(request, servletRequest));
     }
 
     @PostMapping("/refresh")
     public ResponseEntity<AuthenticationResponse> refreshToken(
             @RequestBody String refreshToken
     ) {
-        // TODO: Implement refresh token logic
-        return ResponseEntity.ok(AuthenticationResponse.builder().build());
+        return ResponseEntity.ok(service.refreshToken(refreshToken));
     }
 }

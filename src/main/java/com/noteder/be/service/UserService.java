@@ -1,5 +1,6 @@
 package com.noteder.be.service;
 
+import com.noteder.be.dto.UpdateUserRequest;
 import com.noteder.be.dto.UserDto;
 import com.noteder.be.entity.User;
 import com.noteder.be.entity.UserSettings;
@@ -24,7 +25,6 @@ public class UserService {
 
     @Transactional
     public UserDto createUser(User user) {
-        // Check if email or username already exists
         if (userRepository.existsByEmail(user.getEmail())) {
             throw new RuntimeException("Email already exists");
         }
@@ -32,12 +32,10 @@ public class UserService {
             throw new RuntimeException("Username already exists");
         }
 
-        // Encode password
         user.setPasswordHash(passwordEncoder.encode(user.getPasswordHash()));
 
         User savedUser = userRepository.save(user);
 
-        // Create default settings
         UserSettings settings = UserSettings.builder()
                 .user(savedUser)
                 .build();
@@ -60,6 +58,42 @@ public class UserService {
 
     public Page<UserDto> getAllUsers(Pageable pageable) {
         return userRepository.findAll(pageable).map(this::mapToDto);
+    }
+
+    @Transactional
+    public UserDto updateUser(UUID userId, UpdateUserRequest request) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        if (request.getUsername() != null && !request.getUsername().equals(user.getRealUsername())) {
+            if (userRepository.existsByUsername(request.getUsername())) {
+                throw new RuntimeException("Username already exists");
+            }
+            user.setUsername(request.getUsername());
+        }
+
+        if (request.getAvatar() != null) {
+            user.setAvatar(request.getAvatar());
+        }
+
+        userRepository.save(user);
+
+        if (request.getSettings() != null) {
+            UserSettings settings = userSettingsRepository.findById(userId)
+                    .orElseThrow(() -> new RuntimeException("Settings not found"));
+            
+            if (request.getSettings().getTheme() != null) settings.setTheme(request.getSettings().getTheme());
+            if (request.getSettings().getColorTheme() != null) settings.setColorTheme(request.getSettings().getColorTheme());
+            if (request.getSettings().getFontSize() != null) settings.setFontSize(request.getSettings().getFontSize());
+            if (request.getSettings().getDefaultCategory() != null) settings.setDefaultCategory(request.getSettings().getDefaultCategory());
+            if (request.getSettings().getDefaultNoteColor() != null) settings.setDefaultNoteColor(request.getSettings().getDefaultNoteColor());
+            if (request.getSettings().getDefaultSecurePassword() != null) settings.setDefaultSecurePassword(request.getSettings().getDefaultSecurePassword());
+            settings.setShowStats(request.getSettings().isShowStats());
+            
+            userSettingsRepository.save(settings);
+        }
+
+        return mapToDto(user);
     }
 
     private UserDto mapToDto(User user) {

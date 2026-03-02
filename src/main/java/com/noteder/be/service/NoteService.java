@@ -43,7 +43,6 @@ public class NoteService {
 
         Note savedNote = noteRepository.save(note);
 
-        // Handle attachments if any
         if (noteDto.getAttachments() != null && !noteDto.getAttachments().isEmpty()) {
             List<Attachment> attachments = noteDto.getAttachments().stream()
                     .map(attDto -> Attachment.builder()
@@ -89,9 +88,6 @@ public class NoteService {
 
         Note updatedNote = noteRepository.save(note);
 
-        // Note: Attachment update logic is simplified here. 
-        // In a real scenario, you might want to diff and update attachments.
-        
         return mapToDto(updatedNote);
     }
 
@@ -109,7 +105,6 @@ public class NoteService {
                         .name(att.getName())
                         .type(att.getType())
                         .size(att.getSize())
-                        // Don't return full data in list view to save bandwidth
                         .thumbnail(att.getThumbnail())
                         .createdAt(att.getCreatedAt())
                         .build())
